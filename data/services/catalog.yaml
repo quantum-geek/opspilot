@@ -1,0 +1,52 @@
+version: "1"
+services:
+  - id: payment-service
+    name: Payment Service
+    description: Handles payment processing and transaction lifecycle.
+    team: payments-team
+    language: python
+    tier: 1
+    repo: github.com/acme/payment-service
+    runbooks:
+      - restart-service
+    dependencies:
+      - postgres-payments
+      - stripe-gateway
+    alerts:
+      - name: HighLatency
+        threshold: "p99 > 2s"
+      - name: ErrorRateHigh
+        threshold: "5xx rate > 1%"
+
+  - id: order-service
+    name: Order Service
+    description: Manages order creation, state machine, and fulfillment events.
+    team: commerce-team
+    language: go
+    tier: 1
+    repo: github.com/acme/order-service
+    runbooks:
+      - restart-service
+    dependencies:
+      - payment-service
+      - inventory-service
+      - postgres-orders
+    alerts:
+      - name: OrderFailureRate
+        threshold: "failure rate > 0.5%"
+
+  - id: notification-service
+    name: Notification Service
+    description: Sends emails, SMS, and push notifications.
+    team: platform-team
+    language: python
+    tier: 2
+    repo: github.com/acme/notification-service
+    runbooks:
+      - restart-service
+    dependencies:
+      - sendgrid
+      - twilio
+    alerts:
+      - name: DeliveryFailureRate
+        threshold: "failure rate > 2%"

@@ -1,0 +1,14 @@
+{
+  "id": "INC-001",
+  "title": "Payment service latency spike",
+  "severity": "P1",
+  "status": "resolved",
+  "created_at": "2026-04-20T14:32:00Z",
+  "resolved_at": "2026-04-20T15:47:00Z",
+  "affected_services": ["payment-service", "order-service"],
+  "summary": "Payment service p99 latency exceeded 5s threshold causing order checkout failures.",
+  "root_cause": "Database connection pool exhausted due to a slow query introduced in deploy v2.3.1.",
+  "resolution": "Rolled back to v2.3.0 and increased connection pool size as a temporary fix.",
+  "labels": ["database", "latency", "rollback"],
+  "responders": ["on-call-eng", "db-team"]
+}
