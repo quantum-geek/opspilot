@@ -1,5 +1,6 @@
 import json
 import pathlib
+import re
 from datetime import datetime
 
 import yaml
@@ -42,7 +43,7 @@ def incident_summary(incident_id: str):
     if not incident_path.exists():
         raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
 
-    incident = json.loads(incident_path.read_text())
+    incident = json.loads(incident_path.read_text(encoding="utf-8"))
 
     # Compute duration if the incident is resolved
     duration_minutes: int | None = None
@@ -55,7 +56,7 @@ def incident_summary(incident_id: str):
     runbooks: list[str] = []
     catalog_path = DATA_DIR / "services" / "catalog.yaml"
     if catalog_path.exists():
-        catalog = yaml.safe_load(catalog_path.read_text()) or {}
+        catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
         for svc in catalog.get("services", []):
             if svc["id"] in incident.get("affected_services", []):
                 runbooks.extend(svc.get("runbooks", []))
@@ -74,4 +75,107 @@ def incident_summary(incident_id: str):
         "runbooks": runbooks,
         "responders": incident.get("responders", []),
         "labels": incident.get("labels", []),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Analysis helpers
+# ---------------------------------------------------------------------------
+
+def _extract_mitigation_steps(runbook_body: str) -> list[str]:
+    """Pull step titles from the Mitigation section of a runbook."""
+    match = re.search(r"## Mitigation\n(.*?)(?=\n## |\Z)", runbook_body, re.DOTALL)
+    if match:
+        options = re.findall(r"### (.+)", match.group(1))
+        if options:
+            return [o.strip() for o in options]
+    # Fall back to bold numbered items anywhere in the doc
+    return re.findall(r"^\d+\.\s+\*\*(.+?)\*\*", runbook_body, re.MULTILINE)
+
+
+def _derive_steps_from_labels(labels: list[str]) -> list[str]:
+    steps: list[str] = []
+    if "rollback" in labels:
+        steps.append("Roll back the most recent deployment to the last known-good version")
+    if "database" in labels:
+        steps.append("Check database connection pool utilization and active query count")
+    if "latency" in labels:
+        steps.append("Confirm p99 latency spike in monitoring and identify the slow component")
+    if not steps:
+        steps.append("Investigate recent deployments and configuration changes")
+        steps.append("Review service logs for errors or anomalies")
+    return steps
+
+
+@app.get("/incidents/{incident_id}/analysis")
+def incident_analysis(incident_id: str):
+    incident_path = DATA_DIR / "incidents" / f"{incident_id}.json"
+    if not incident_path.exists():
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+
+    incident = json.loads(incident_path.read_text(encoding="utf-8"))
+    affected = incident.get("affected_services", [])
+
+    # Load service catalog
+    catalog_path = DATA_DIR / "services" / "catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else {}
+    matched_services = [s for s in catalog.get("services", []) if s["id"] in affected]
+
+    # Teams owning affected services (preserves order, deduplicates)
+    teams = list(dict.fromkeys(s["team"] for s in matched_services if s.get("team")))
+
+    # Runbook IDs listed in the catalog for affected services
+    catalog_runbook_ids: list[str] = []
+    for svc in matched_services:
+        catalog_runbook_ids.extend(svc.get("runbooks", []))
+    catalog_runbook_ids = list(dict.fromkeys(catalog_runbook_ids))
+
+    # Try to find a runbook file that matches this incident or one of its services
+    runbooks_dir = DATA_DIR / "runbooks"
+    recommended_runbook: str | None = None
+    recommended_steps: list[str] = []
+
+    for rb_id in catalog_runbook_ids:
+        rb_path = runbooks_dir / f"{rb_id}.md"
+        if not rb_path.exists():
+            continue
+        content = rb_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            continue
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            continue
+        try:
+            meta = yaml.safe_load(parts[1]) or {}
+        except yaml.YAMLError:
+            continue
+        if meta.get("incident") == incident_id or meta.get("service") in affected:
+            recommended_runbook = meta.get("id", rb_id)
+            recommended_steps = _extract_mitigation_steps(parts[2])
+            break
+
+    if not recommended_steps:
+        recommended_steps = _derive_steps_from_labels(incident.get("labels", []))
+
+    # Escalation targets: service-owning teams + incident responders
+    escalation_targets = list(dict.fromkeys(teams + incident.get("responders", [])))
+
+    likely_cause = incident.get("root_cause") or "Unknown — further investigation required"
+
+    reasoning_summary = (
+        f"This {incident.get('severity', 'unknown')} incident affected "
+        f"{len(affected)} service(s) ({', '.join(affected)}) "
+        f"and is currently {incident.get('status', 'unknown')}. "
+    )
+    if recommended_runbook:
+        reasoning_summary += f"Runbook {recommended_runbook} directly covers this scenario. "
+    reasoning_summary += f"Root cause: {likely_cause.rstrip('.')}."
+
+    return {
+        "incident_id": incident["id"],
+        "likely_cause": likely_cause,
+        "recommended_steps": recommended_steps,
+        "recommended_runbook": recommended_runbook,
+        "escalation_targets": escalation_targets,
+        "reasoning_summary": reasoning_summary,
     }
