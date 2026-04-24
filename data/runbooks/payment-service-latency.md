@@ -1,5 +1,5 @@
 ---
-id: RB-001
+id: payment-service-latency
 title: Mitigate payment-service latency spike
 service: payment-service
 severity: P1

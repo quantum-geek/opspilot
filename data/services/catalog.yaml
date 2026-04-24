@@ -8,7 +8,7 @@ services:
     tier: 1
     repo: github.com/acme/payment-service
     runbooks:
-      - restart-service
+      - payment-service-latency
     dependencies:
       - postgres-payments
       - stripe-gateway
@@ -25,8 +25,7 @@ services:
     language: go
     tier: 1
     repo: github.com/acme/order-service
-    runbooks:
-      - restart-service
+    runbooks: []
     dependencies:
       - payment-service
       - inventory-service
@@ -42,8 +41,7 @@ services:
     language: python
     tier: 2
     repo: github.com/acme/notification-service
-    runbooks:
-      - restart-service
+    runbooks: []
     dependencies:
       - sendgrid
       - twilio
