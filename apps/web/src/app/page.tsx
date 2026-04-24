@@ -26,6 +26,16 @@ interface IncidentAnalysis {
   reasoning_summary: string;
 }
 
+interface StakeholderUpdate {
+  incident_id: string;
+  audience: string;
+  subject: string;
+  update_text: string;
+  status: string;
+  impact_summary: string;
+  next_steps: string[];
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
@@ -36,6 +46,10 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<IncidentAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  const [stakeholderUpdate, setStakeholderUpdate] = useState<StakeholderUpdate | null>(null);
+  const [stakeholderLoading, setStakeholderLoading] = useState(false);
+  const [stakeholderError, setStakeholderError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_URL}/incidents/INC-001/summary`)
@@ -49,6 +63,22 @@ export default function Home() {
       )
       .finally(() => setSummaryLoading(false));
   }, []);
+
+  function draftStakeholderUpdate() {
+    setStakeholderLoading(true);
+    setStakeholderError(null);
+    setStakeholderUpdate(null);
+    fetch(`${API_URL}/incidents/INC-001/stakeholder-update`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(setStakeholderUpdate)
+      .catch((err: unknown) =>
+        setStakeholderError(err instanceof Error ? err.message : "Unknown error")
+      )
+      .finally(() => setStakeholderLoading(false));
+  }
 
   function runAnalysis() {
     setAnalysisLoading(true);
@@ -214,6 +244,73 @@ export default function Home() {
             <div style={{ marginTop: "1rem" }}>
               <strong>Escalation targets</strong>
               <p style={{ margin: "0.25rem 0 0" }}>{analysis.escalation_targets.join(", ")}</p>
+            </div>
+          )}
+
+          <div style={{ marginTop: "1.5rem" }}>
+            <button
+              onClick={draftStakeholderUpdate}
+              disabled={stakeholderLoading}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: stakeholderLoading ? "not-allowed" : "pointer",
+                background: "#111",
+                color: "#fff",
+                border: "none",
+              }}
+            >
+              {stakeholderLoading ? "Drafting…" : "Draft Stakeholder Update"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {stakeholderError && (
+        <p style={{ marginTop: "1rem", color: "#c00", border: "1px solid #c00", padding: "0.75rem" }}>
+          Stakeholder update error: {stakeholderError}
+        </p>
+      )}
+
+      {stakeholderUpdate && (
+        <section
+          style={{
+            marginTop: "2rem",
+            borderTop: "2px solid #111",
+            paddingTop: "1.5rem",
+          }}
+        >
+          <h2 style={{ margin: "0 0 1rem" }}>Stakeholder Update</h2>
+
+          <div>
+            <strong>To</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{stakeholderUpdate.audience}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Subject</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{stakeholderUpdate.subject}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Impact</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{stakeholderUpdate.impact_summary}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Update</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{stakeholderUpdate.update_text}</p>
+          </div>
+
+          {stakeholderUpdate.next_steps.length > 0 && (
+            <div style={{ marginTop: "1rem" }}>
+              <strong>Next steps</strong>
+              <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem" }}>
+                {stakeholderUpdate.next_steps.map((step, i) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ul>
             </div>
           )}
         </section>

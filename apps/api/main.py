@@ -179,3 +179,122 @@ def incident_analysis(incident_id: str):
         "escalation_targets": escalation_targets,
         "reasoning_summary": reasoning_summary,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stakeholder update helpers
+# ---------------------------------------------------------------------------
+
+def _parse_post_incident_steps(runbook_body: str) -> list[str]:
+    """Extract bullet items from the Post-Incident section of a runbook."""
+    match = re.search(r"## Post-Incident\n(.*?)(?=\n## |\Z)", runbook_body, re.DOTALL)
+    if not match:
+        return []
+    items = re.findall(r"^-\s+(.+)", match.group(1), re.MULTILINE)
+    return [re.sub(r"`([^`]+)`", r"\1", item).strip() for item in items]
+
+
+def _derive_next_steps(labels: list[str], status: str) -> list[str]:
+    steps: list[str] = []
+    if status == "resolved":
+        steps.append("Complete post-mortem within 24 hours")
+    if "database" in labels:
+        steps.append("Permanently increase database connection pool size via infrastructure-as-code")
+    if "rollback" in labels:
+        steps.append("Investigate and fix the root cause before re-deploying the rolled-back version")
+    if not steps:
+        steps.append("Review and document the incident timeline")
+    return steps
+
+
+@app.get("/incidents/{incident_id}/stakeholder-update")
+def incident_stakeholder_update(incident_id: str):
+    incident_path = DATA_DIR / "incidents" / f"{incident_id}.json"
+    if not incident_path.exists():
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+
+    incident = json.loads(incident_path.read_text(encoding="utf-8"))
+    affected = incident.get("affected_services", [])
+    severity = incident.get("severity", "unknown")
+    status = incident.get("status", "unknown")
+    title = incident.get("title", "Incident")
+
+    # Duration
+    duration_minutes: int | None = None
+    if incident.get("created_at") and incident.get("resolved_at"):
+        t0 = datetime.fromisoformat(incident["created_at"].replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(incident["resolved_at"].replace("Z", "+00:00"))
+        duration_minutes = int((t1 - t0).total_seconds() / 60)
+
+    # Audience by severity
+    audience_map = {
+        "P0": "Executive Leadership, Engineering Leadership, Customer Success, Product",
+        "P1": "Engineering Leadership, Customer Success, Product",
+        "P2": "Engineering Leadership, Customer Success",
+    }
+    audience = audience_map.get(severity, "Engineering Team")
+
+    subject = f"{incident_id} [{severity}] {title} — {status.capitalize()}"
+
+    # Prose update
+    prose: list[str] = [f"{title} is currently {status}."]
+    if incident.get("summary"):
+        prose.append(incident["summary"])
+    if incident.get("root_cause"):
+        prose.append(f"Root cause: {incident['root_cause'].rstrip('.')}.")
+    if incident.get("resolution"):
+        prose.append(f"Resolution: {incident['resolution'].rstrip('.')}.")
+    if duration_minutes is not None:
+        prose.append(f"Total duration: {duration_minutes} minutes.")
+    update_text = " ".join(prose)
+
+    # Impact summary
+    svc_list = ", ".join(affected) if affected else "unknown services"
+    impact_summary = (incident.get("summary", "") + " " if incident.get("summary") else "")
+    impact_summary += (
+        f"Affected {svc_list} for {duration_minutes} minutes."
+        if duration_minutes is not None
+        else f"Affected {svc_list}."
+    )
+
+    # Next steps: prefer runbook Post-Incident section
+    catalog_path = DATA_DIR / "services" / "catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else {}
+    matched_services = [s for s in catalog.get("services", []) if s["id"] in affected]
+    catalog_runbook_ids: list[str] = []
+    for svc in matched_services:
+        catalog_runbook_ids.extend(svc.get("runbooks", []))
+    catalog_runbook_ids = list(dict.fromkeys(catalog_runbook_ids))
+
+    next_steps: list[str] = []
+    runbooks_dir = DATA_DIR / "runbooks"
+    for rb_id in catalog_runbook_ids:
+        rb_path = runbooks_dir / f"{rb_id}.md"
+        if not rb_path.exists():
+            continue
+        content = rb_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            continue
+        rb_parts = content.split("---", 2)
+        if len(rb_parts) < 3:
+            continue
+        try:
+            meta = yaml.safe_load(rb_parts[1]) or {}
+        except yaml.YAMLError:
+            continue
+        if meta.get("incident") == incident_id or meta.get("service") in affected:
+            next_steps = _parse_post_incident_steps(rb_parts[2])
+            break
+
+    if not next_steps:
+        next_steps = _derive_next_steps(incident.get("labels", []), status)
+
+    return {
+        "incident_id": incident["id"],
+        "audience": audience,
+        "subject": subject,
+        "update_text": update_text,
+        "status": status,
+        "impact_summary": impact_summary,
+        "next_steps": next_steps,
+    }
