@@ -469,3 +469,170 @@ def incident_stakeholder_update(incident_id: str):
         "next_steps": next_steps,
         "draft_source": draft_source,
     }
+
+
+# ---------------------------------------------------------------------------
+# Postmortem draft helpers
+# ---------------------------------------------------------------------------
+
+def _deterministic_postmortem_draft(
+    incident: dict,
+    duration_minutes: int | None,
+    follow_ups: list[str],
+) -> dict:
+    affected = incident.get("affected_services", [])
+    svc_list = ", ".join(affected) if affected else "unknown services"
+
+    impact = f"Affected services: {svc_list}."
+    if duration_minutes is not None:
+        impact += f" Total downtime: {duration_minutes} minutes."
+
+    timeline: list[str] = []
+    if incident.get("created_at"):
+        timeline.append(f"{incident['created_at']} — Incident detected.")
+    if incident.get("resolved_at"):
+        timeline.append(f"{incident['resolved_at']} — Incident resolved.")
+
+    return {
+        "title": f"Post-Mortem: {incident.get('title', 'Incident')}",
+        "summary": incident.get("summary", ""),
+        "impact": impact,
+        "timeline": timeline,
+        "root_cause": incident.get("root_cause") or "Unknown — further investigation required.",
+        "resolution": incident.get("resolution") or "No resolution recorded.",
+        "follow_ups": follow_ups,
+    }
+
+
+def _llm_postmortem_draft(
+    incident: dict,
+    catalog_yaml: str,
+    runbook_text: str,
+    duration_minutes: int | None,
+) -> dict:
+    """Call Claude to produce a structured postmortem draft.
+
+    Raises on any failure so callers can fall back to deterministic logic.
+    """
+    import anthropic  # lazy import
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
+
+    duration_line = (
+        f"Duration: {duration_minutes} minutes" if duration_minutes is not None else "Duration: ongoing"
+    )
+
+    prompt = (
+        "You are an SRE writing a post-mortem document. "
+        "Use the incident data below to produce a structured post-mortem draft.\n\n"
+        f"INCIDENT:\n{json.dumps(incident, indent=2)}\n\n"
+        f"SERVICE CATALOG (relevant excerpt):\n{catalog_yaml}\n\n"
+        f"RUNBOOK:\n{runbook_text}\n\n"
+        f"{duration_line}\n\n"
+        "Return a JSON object with exactly these six keys:\n"
+        '  "title"      — post-mortem document title (string)\n'
+        '  "summary"    — 2-3 sentence executive summary (string)\n'
+        '  "impact"     — one sentence describing customer / business impact (string)\n'
+        '  "timeline"   — ordered list of key events as strings, e.g. "2026-04-20T14:32Z — Incident detected"\n'
+        '  "root_cause" — concise root cause statement (string)\n'
+        '  "resolution" — what was done to resolve the incident (string)\n'
+        '  "follow_ups" — JSON array of 2-5 action items to prevent recurrence (strings)\n\n'
+        "Output only the JSON object, no markdown fences or extra text."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=768,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    result = json.loads(raw)
+    for key in ("title", "summary", "impact", "timeline", "root_cause", "resolution", "follow_ups"):
+        if key not in result:
+            raise KeyError(f"LLM response missing key: {key}")
+    if not isinstance(result["timeline"], list):
+        raise TypeError("timeline must be a list")
+    if not isinstance(result["follow_ups"], list):
+        raise TypeError("follow_ups must be a list")
+    return result
+
+
+@app.get("/incidents/{incident_id}/postmortem-draft")
+def incident_postmortem_draft(incident_id: str):
+    incident_path = DATA_DIR / "incidents" / f"{incident_id}.json"
+    if not incident_path.exists():
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+
+    incident = json.loads(incident_path.read_text(encoding="utf-8"))
+    affected = incident.get("affected_services", [])
+
+    # Duration
+    duration_minutes: int | None = None
+    if incident.get("created_at") and incident.get("resolved_at"):
+        t0 = datetime.fromisoformat(incident["created_at"].replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(incident["resolved_at"].replace("Z", "+00:00"))
+        duration_minutes = int((t1 - t0).total_seconds() / 60)
+
+    # Catalog + runbook lookup
+    catalog_path = DATA_DIR / "services" / "catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else {}
+    matched_services = [s for s in catalog.get("services", []) if s["id"] in affected]
+    catalog_runbook_ids: list[str] = []
+    for svc in matched_services:
+        catalog_runbook_ids.extend(svc.get("runbooks", []))
+    catalog_runbook_ids = list(dict.fromkeys(catalog_runbook_ids))
+
+    runbooks_dir = DATA_DIR / "runbooks"
+    runbook_text = ""
+    follow_ups: list[str] = []
+    for rb_id in catalog_runbook_ids:
+        rb_path = runbooks_dir / f"{rb_id}.md"
+        if not rb_path.exists():
+            continue
+        content = rb_path.read_text(encoding="utf-8")
+        runbook_text = content
+        if not content.startswith("---"):
+            continue
+        rb_parts = content.split("---", 2)
+        if len(rb_parts) < 3:
+            continue
+        try:
+            meta = yaml.safe_load(rb_parts[1]) or {}
+        except yaml.YAMLError:
+            continue
+        if meta.get("incident") == incident_id or meta.get("service") in affected:
+            follow_ups = _parse_post_incident_steps(rb_parts[2])
+            break
+
+    if not follow_ups:
+        follow_ups = _derive_next_steps(incident.get("labels", []), incident.get("status", ""))
+
+    # Build deterministic draft as baseline
+    draft = _deterministic_postmortem_draft(incident, duration_minutes, follow_ups)
+    draft_source = "fallback"
+
+    # Attempt LLM draft; silently fall back on any failure
+    try:
+        llm = _llm_postmortem_draft(
+            incident=incident,
+            catalog_yaml=catalog_path.read_text(encoding="utf-8") if catalog_path.exists() else "",
+            runbook_text=runbook_text,
+            duration_minutes=duration_minutes,
+        )
+        draft = llm
+        draft_source = "llm"
+    except Exception as exc:
+        logger.warning("LLM postmortem draft failed, using fallback: %s", exc)
+
+    return {
+        "incident_id": incident["id"],
+        "draft_source": draft_source,
+        **draft,
+    }

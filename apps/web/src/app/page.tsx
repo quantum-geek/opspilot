@@ -27,6 +27,18 @@ interface IncidentAnalysis {
   analysis_source?: "llm" | "fallback";
 }
 
+interface PostmortemDraft {
+  incident_id: string;
+  title: string;
+  summary: string;
+  impact: string;
+  timeline: string[];
+  root_cause: string;
+  resolution: string;
+  follow_ups: string[];
+  draft_source?: "llm" | "fallback";
+}
+
 interface StakeholderUpdate {
   incident_id: string;
   audience: string;
@@ -52,6 +64,10 @@ export default function Home() {
   const [stakeholderUpdate, setStakeholderUpdate] = useState<StakeholderUpdate | null>(null);
   const [stakeholderLoading, setStakeholderLoading] = useState(false);
   const [stakeholderError, setStakeholderError] = useState<string | null>(null);
+
+  const [postmortem, setPostmortem] = useState<PostmortemDraft | null>(null);
+  const [postmortemLoading, setPostmortemLoading] = useState(false);
+  const [postmortemError, setPostmortemError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_URL}/incidents/INC-001/summary`)
@@ -80,6 +96,22 @@ export default function Home() {
         setStakeholderError(err instanceof Error ? err.message : "Unknown error")
       )
       .finally(() => setStakeholderLoading(false));
+  }
+
+  function generatePostmortem() {
+    setPostmortemLoading(true);
+    setPostmortemError(null);
+    setPostmortem(null);
+    fetch(`${API_URL}/incidents/INC-001/postmortem-draft`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(setPostmortem)
+      .catch((err: unknown) =>
+        setPostmortemError(err instanceof Error ? err.message : "Unknown error")
+      )
+      .finally(() => setPostmortemLoading(false));
   }
 
   function runAnalysis() {
@@ -341,6 +373,104 @@ export default function Home() {
               <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem" }}>
                 {stakeholderUpdate.next_steps.map((step, i) => (
                   <li key={i}>{step}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div style={{ marginTop: "1.5rem" }}>
+            <button
+              onClick={generatePostmortem}
+              disabled={postmortemLoading}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: postmortemLoading ? "not-allowed" : "pointer",
+                background: "#111",
+                color: "#fff",
+                border: "none",
+              }}
+            >
+              {postmortemLoading ? "Generating…" : "Generate Postmortem Draft"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {postmortemError && (
+        <p style={{ marginTop: "1rem", color: "#c00", border: "1px solid #c00", padding: "0.75rem" }}>
+          Postmortem error: {postmortemError}
+        </p>
+      )}
+
+      {postmortem && (
+        <section
+          style={{
+            marginTop: "2rem",
+            borderTop: "2px solid #111",
+            paddingTop: "1.5rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0 }}>Postmortem Draft</h2>
+            {postmortem.draft_source && (
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  padding: "2px 6px",
+                  background: postmortem.draft_source === "llm" ? "#d4edda" : "#f4f4f4",
+                  color: postmortem.draft_source === "llm" ? "#155724" : "#555",
+                  border: `1px solid ${postmortem.draft_source === "llm" ? "#c3e6cb" : "#ccc"}`,
+                }}
+              >
+                {postmortem.draft_source === "llm" ? "LLM draft" : "fallback"}
+              </span>
+            )}
+          </div>
+
+          <div>
+            <strong>Title</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{postmortem.title}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Summary</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{postmortem.summary}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Impact</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{postmortem.impact}</p>
+          </div>
+
+          {postmortem.timeline.length > 0 && (
+            <div style={{ marginTop: "1rem" }}>
+              <strong>Timeline</strong>
+              <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem" }}>
+                {postmortem.timeline.map((event, i) => (
+                  <li key={i}>{event}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Root cause</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{postmortem.root_cause}</p>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <strong>Resolution</strong>
+            <p style={{ margin: "0.25rem 0 0" }}>{postmortem.resolution}</p>
+          </div>
+
+          {postmortem.follow_ups.length > 0 && (
+            <div style={{ marginTop: "1rem" }}>
+              <strong>Follow-ups</strong>
+              <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem" }}>
+                {postmortem.follow_ups.map((item, i) => (
+                  <li key={i}>{item}</li>
                 ))}
               </ul>
             </div>
