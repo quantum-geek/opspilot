@@ -22,6 +22,27 @@ app.add_middleware(
 
 # Resolves to OpsPilot/data/ locally; docker-compose mounts it at /data
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data"
+AUDIT_DIR = DATA_DIR / "audit"
+
+
+# ---------------------------------------------------------------------------
+# Audit trail helpers
+# ---------------------------------------------------------------------------
+
+def _append_audit_event(incident_id: str, artifact_type: str, source: str, action: str) -> dict:
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+    audit_path = AUDIT_DIR / f"{incident_id}.json"
+    events: list = json.loads(audit_path.read_text(encoding="utf-8")) if audit_path.exists() else []
+    event = {
+        "incident_id": incident_id,
+        "artifact_type": artifact_type,
+        "source": source,
+        "action": action,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    events.append(event)
+    audit_path.write_text(json.dumps(events, indent=2), encoding="utf-8")
+    return event
 
 
 @app.get("/health")
@@ -256,6 +277,7 @@ def incident_analysis(incident_id: str):
     except Exception as exc:
         logger.warning("LLM incident analysis failed, using fallback: %s", exc)
 
+    _append_audit_event(incident["id"], "analysis", analysis_source, "generated")
     return {
         "incident_id": incident["id"],
         "likely_cause": likely_cause,
@@ -459,6 +481,7 @@ def incident_stakeholder_update(incident_id: str):
     except Exception as exc:
         logger.warning("LLM stakeholder update failed, using fallback: %s", exc)
 
+    _append_audit_event(incident["id"], "stakeholder_update", draft_source, "generated")
     return {
         "incident_id": incident["id"],
         "audience": audience,
@@ -631,8 +654,54 @@ def incident_postmortem_draft(incident_id: str):
     except Exception as exc:
         logger.warning("LLM postmortem draft failed, using fallback: %s", exc)
 
+    _append_audit_event(incident["id"], "postmortem_draft", draft_source, "generated")
     return {
         "incident_id": incident["id"],
         "draft_source": draft_source,
         **draft,
     }
+
+
+# ---------------------------------------------------------------------------
+# Audit endpoints
+# ---------------------------------------------------------------------------
+
+def _require_incident(incident_id: str) -> None:
+    if not (DATA_DIR / "incidents" / f"{incident_id}.json").exists():
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+
+
+@app.get("/incidents/{incident_id}/audit")
+def incident_audit(incident_id: str):
+    _require_incident(incident_id)
+    audit_path = AUDIT_DIR / f"{incident_id}.json"
+    events = json.loads(audit_path.read_text(encoding="utf-8")) if audit_path.exists() else []
+    return {"incident_id": incident_id, "events": events}
+
+
+@app.post("/incidents/{incident_id}/stakeholder-update/approve")
+def approve_stakeholder_update(incident_id: str):
+    _require_incident(incident_id)
+    event = _append_audit_event(incident_id, "stakeholder_update", "human", "approved")
+    return {"ok": True, "event": event}
+
+
+@app.post("/incidents/{incident_id}/stakeholder-update/reject")
+def reject_stakeholder_update(incident_id: str):
+    _require_incident(incident_id)
+    event = _append_audit_event(incident_id, "stakeholder_update", "human", "rejected")
+    return {"ok": True, "event": event}
+
+
+@app.post("/incidents/{incident_id}/postmortem-draft/approve")
+def approve_postmortem_draft(incident_id: str):
+    _require_incident(incident_id)
+    event = _append_audit_event(incident_id, "postmortem_draft", "human", "approved")
+    return {"ok": True, "event": event}
+
+
+@app.post("/incidents/{incident_id}/postmortem-draft/reject")
+def reject_postmortem_draft(incident_id: str):
+    _require_incident(incident_id)
+    event = _append_audit_event(incident_id, "postmortem_draft", "human", "rejected")
+    return {"ok": True, "event": event}

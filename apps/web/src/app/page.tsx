@@ -27,6 +27,14 @@ interface IncidentAnalysis {
   analysis_source?: "llm" | "fallback";
 }
 
+interface AuditEvent {
+  incident_id: string;
+  artifact_type: string;
+  source: string;
+  action: string;
+  timestamp: string;
+}
+
 interface PostmortemDraft {
   incident_id: string;
   title: string;
@@ -69,6 +77,15 @@ export default function Home() {
   const [postmortemLoading, setPostmortemLoading] = useState(false);
   const [postmortemError, setPostmortemError] = useState<string | null>(null);
 
+  const [stakeholderApproval, setStakeholderApproval] = useState<"approved" | "rejected" | null>(null);
+  const [stakeholderApprovalError, setStakeholderApprovalError] = useState<string | null>(null);
+  const [postmortemApproval, setPostmortemApproval] = useState<"approved" | "rejected" | null>(null);
+  const [postmortemApprovalError, setPostmortemApprovalError] = useState<string | null>(null);
+
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
   useEffect(() => {
     fetch(`${API_URL}/incidents/INC-001/summary`)
       .then((res) => {
@@ -86,6 +103,8 @@ export default function Home() {
     setStakeholderLoading(true);
     setStakeholderError(null);
     setStakeholderUpdate(null);
+    setStakeholderApproval(null);
+    setStakeholderApprovalError(null);
     fetch(`${API_URL}/incidents/INC-001/stakeholder-update`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -102,6 +121,8 @@ export default function Home() {
     setPostmortemLoading(true);
     setPostmortemError(null);
     setPostmortem(null);
+    setPostmortemApproval(null);
+    setPostmortemApprovalError(null);
     fetch(`${API_URL}/incidents/INC-001/postmortem-draft`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -112,6 +133,35 @@ export default function Home() {
         setPostmortemError(err instanceof Error ? err.message : "Unknown error")
       )
       .finally(() => setPostmortemLoading(false));
+  }
+
+  function handleApproval(
+    artifact: "stakeholder-update" | "postmortem-draft",
+    action: "approve" | "reject"
+  ) {
+    const setApproval = artifact === "stakeholder-update" ? setStakeholderApproval : setPostmortemApproval;
+    const setError = artifact === "stakeholder-update" ? setStakeholderApprovalError : setPostmortemApprovalError;
+    setError(null);
+    fetch(`${API_URL}/incidents/INC-001/${artifact}/${action}`, { method: "POST" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(() => setApproval(action === "approve" ? "approved" : "rejected"))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Unknown error"));
+  }
+
+  function loadAuditHistory() {
+    setAuditLoading(true);
+    setAuditError(null);
+    fetch(`${API_URL}/incidents/INC-001/audit`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: { events: AuditEvent[] }) => setAuditEvents(data.events))
+      .catch((err: unknown) => setAuditError(err instanceof Error ? err.message : "Unknown error"))
+      .finally(() => setAuditLoading(false));
   }
 
   function runAnalysis() {
@@ -378,7 +428,46 @@ export default function Home() {
             </div>
           )}
 
-          <div style={{ marginTop: "1.5rem" }}>
+          <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={() => handleApproval("stakeholder-update", "approve")}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: "pointer",
+                background: stakeholderApproval === "approved" ? "#155724" : "#fff",
+                color: stakeholderApproval === "approved" ? "#fff" : "#111",
+                border: "1px solid #111",
+              }}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleApproval("stakeholder-update", "reject")}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: "pointer",
+                background: stakeholderApproval === "rejected" ? "#721c24" : "#fff",
+                color: stakeholderApproval === "rejected" ? "#fff" : "#111",
+                border: "1px solid #111",
+              }}
+            >
+              Reject
+            </button>
+            {stakeholderApproval && (
+              <span style={{ fontSize: "0.85rem", color: stakeholderApproval === "approved" ? "#155724" : "#721c24" }}>
+                {stakeholderApproval === "approved" ? "Approved" : "Rejected"}
+              </span>
+            )}
+            {stakeholderApprovalError && (
+              <span style={{ fontSize: "0.85rem", color: "#c00" }}>{stakeholderApprovalError}</span>
+            )}
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
             <button
               onClick={generatePostmortem}
               disabled={postmortemLoading}
@@ -475,8 +564,107 @@ export default function Home() {
               </ul>
             </div>
           )}
+
+          <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={() => handleApproval("postmortem-draft", "approve")}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: "pointer",
+                background: postmortemApproval === "approved" ? "#155724" : "#fff",
+                color: postmortemApproval === "approved" ? "#fff" : "#111",
+                border: "1px solid #111",
+              }}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleApproval("postmortem-draft", "reject")}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                padding: "0.5rem 1.25rem",
+                cursor: "pointer",
+                background: postmortemApproval === "rejected" ? "#721c24" : "#fff",
+                color: postmortemApproval === "rejected" ? "#fff" : "#111",
+                border: "1px solid #111",
+              }}
+            >
+              Reject
+            </button>
+            {postmortemApproval && (
+              <span style={{ fontSize: "0.85rem", color: postmortemApproval === "approved" ? "#155724" : "#721c24" }}>
+                {postmortemApproval === "approved" ? "Approved" : "Rejected"}
+              </span>
+            )}
+            {postmortemApprovalError && (
+              <span style={{ fontSize: "0.85rem", color: "#c00" }}>{postmortemApprovalError}</span>
+            )}
+          </div>
         </section>
       )}
+
+      {/* Audit history */}
+      <section
+        style={{
+          marginTop: "2rem",
+          borderTop: "2px solid #111",
+          paddingTop: "1.5rem",
+        }}
+      >
+        <h2 style={{ margin: "0 0 1rem" }}>Audit History</h2>
+        <button
+          onClick={loadAuditHistory}
+          disabled={auditLoading}
+          style={{
+            fontFamily: "monospace",
+            fontSize: "0.9rem",
+            padding: "0.5rem 1.25rem",
+            cursor: auditLoading ? "not-allowed" : "pointer",
+            background: "#111",
+            color: "#fff",
+            border: "none",
+          }}
+        >
+          {auditLoading ? "Loading…" : "Load Audit History"}
+        </button>
+
+        {auditError && (
+          <p style={{ marginTop: "0.75rem", color: "#c00" }}>Error: {auditError}</p>
+        )}
+
+        {auditEvents !== null && auditEvents.length === 0 && (
+          <p style={{ marginTop: "0.75rem", color: "#888" }}>No audit events recorded yet.</p>
+        )}
+
+        {auditEvents && auditEvents.length > 0 && (
+          <table style={{ marginTop: "0.75rem", width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                {["Timestamp", "Artifact", "Action", "Source"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", paddingBottom: "0.25rem", paddingRight: "1rem" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {auditEvents.map((ev, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "0.25rem 1rem 0.25rem 0", color: "#555" }}>{ev.timestamp.replace("T", " ").replace("Z", " UTC")}</td>
+                  <td style={{ padding: "0.25rem 1rem 0.25rem 0" }}>{ev.artifact_type}</td>
+                  <td style={{ padding: "0.25rem 1rem 0.25rem 0", color: ev.action === "approved" ? "#155724" : ev.action === "rejected" ? "#721c24" : "#111" }}>
+                    {ev.action}
+                  </td>
+                  <td style={{ padding: "0.25rem 0" }}>{ev.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
     </main>
   );
 }
