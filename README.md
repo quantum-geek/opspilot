@@ -49,6 +49,16 @@ make dev-web      # terminal 3
 
 ### Local development — Windows (PowerShell)
 
+## Local Development
+
+### Prerequisites
+- Node.js and npm installed
+- Python 3.11+ installed
+- PowerShell on Windows
+- `.env` file created from `.env.example`
+
+Create `.env` once from the repo root:
+
 ```powershell
 Copy-Item .env.example .env
 # open .env and add your ANTHROPIC_API_KEY
