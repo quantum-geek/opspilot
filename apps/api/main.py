@@ -83,6 +83,63 @@ def incident_summary(incident_id: str):
 
 
 # ---------------------------------------------------------------------------
+# LLM incident analysis
+# ---------------------------------------------------------------------------
+
+def _llm_incident_analysis(
+    incident: dict,
+    catalog_yaml: str,
+    runbook_text: str,
+) -> dict:
+    """Call Claude to produce likely_cause, recommended_steps, recommended_runbook,
+    escalation_targets, and reasoning_summary.
+
+    Raises on any failure so callers can fall back to deterministic logic.
+    """
+    import anthropic  # lazy import — only needed when LLM path is taken
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
+
+    prompt = (
+        "You are an expert SRE performing incident analysis. "
+        "Analyze the incident below and return a JSON object.\n\n"
+        f"INCIDENT:\n{json.dumps(incident, indent=2)}\n\n"
+        f"SERVICE CATALOG (relevant excerpt):\n{catalog_yaml}\n\n"
+        f"RUNBOOK:\n{runbook_text}\n\n"
+        "Return a JSON object with exactly these five keys:\n"
+        '  "likely_cause"        — one concise sentence stating the root cause\n'
+        '  "recommended_steps"   — JSON array of 2-4 ordered mitigation steps (strings)\n'
+        '  "recommended_runbook" — runbook id string, or null if none applies\n'
+        '  "escalation_targets"  — JSON array of team/role strings to escalate to\n'
+        '  "reasoning_summary"   — 2-3 sentence explanation of the analysis\n\n'
+        "Output only the JSON object, no markdown fences or extra text."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    result = json.loads(raw)
+    for key in ("likely_cause", "recommended_steps", "recommended_runbook", "escalation_targets", "reasoning_summary"):
+        if key not in result:
+            raise KeyError(f"LLM response missing key: {key}")
+    if not isinstance(result["recommended_steps"], list):
+        raise TypeError("recommended_steps must be a list")
+    if not isinstance(result["escalation_targets"], list):
+        raise TypeError("escalation_targets must be a list")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Analysis helpers
 # ---------------------------------------------------------------------------
 
@@ -175,6 +232,30 @@ def incident_analysis(incident_id: str):
         reasoning_summary += f"Runbook {recommended_runbook} directly covers this scenario. "
     reasoning_summary += f"Root cause: {likely_cause.rstrip('.')}."
 
+    # Attempt LLM-backed analysis; silently fall back on any failure
+    analysis_source = "fallback"
+    runbook_text = ""
+    for rb_id in catalog_runbook_ids:
+        rb_path = runbooks_dir / f"{rb_id}.md"
+        if rb_path.exists():
+            runbook_text = rb_path.read_text(encoding="utf-8")
+            break
+
+    try:
+        llm = _llm_incident_analysis(
+            incident=incident,
+            catalog_yaml=catalog_path.read_text(encoding="utf-8") if catalog_path.exists() else "",
+            runbook_text=runbook_text,
+        )
+        likely_cause = llm["likely_cause"]
+        recommended_steps = llm["recommended_steps"]
+        recommended_runbook = llm["recommended_runbook"]
+        escalation_targets = llm["escalation_targets"]
+        reasoning_summary = llm["reasoning_summary"]
+        analysis_source = "llm"
+    except Exception as exc:
+        logger.warning("LLM incident analysis failed, using fallback: %s", exc)
+
     return {
         "incident_id": incident["id"],
         "likely_cause": likely_cause,
@@ -182,6 +263,7 @@ def incident_analysis(incident_id: str):
         "recommended_runbook": recommended_runbook,
         "escalation_targets": escalation_targets,
         "reasoning_summary": reasoning_summary,
+        "analysis_source": analysis_source,
     }
 
 

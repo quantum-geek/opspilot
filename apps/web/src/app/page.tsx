@@ -24,6 +24,7 @@ interface IncidentAnalysis {
   recommended_runbook: string | null;
   escalation_targets: string[];
   reasoning_summary: string;
+  analysis_source?: "llm" | "fallback";
 }
 
 interface StakeholderUpdate {
@@ -211,7 +212,22 @@ export default function Home() {
             paddingTop: "1.5rem",
           }}
         >
-          <h2 style={{ margin: "0 0 1rem" }}>Analysis</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0 }}>Analysis</h2>
+            {analysis.analysis_source && (
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  padding: "2px 6px",
+                  background: analysis.analysis_source === "llm" ? "#d4edda" : "#f4f4f4",
+                  color: analysis.analysis_source === "llm" ? "#155724" : "#555",
+                  border: `1px solid ${analysis.analysis_source === "llm" ? "#c3e6cb" : "#ccc"}`,
+                }}
+              >
+                {analysis.analysis_source === "llm" ? "LLM analysis" : "fallback"}
+              </span>
+            )}
+          </div>
 
           <div>
             <strong>Likely cause</strong>
