@@ -34,6 +34,7 @@ interface StakeholderUpdate {
   status: string;
   impact_summary: string;
   next_steps: string[];
+  draft_source?: "llm" | "fallback";
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -281,7 +282,22 @@ export default function Home() {
             paddingTop: "1.5rem",
           }}
         >
-          <h2 style={{ margin: "0 0 1rem" }}>Stakeholder Update</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0 }}>Stakeholder Update</h2>
+            {stakeholderUpdate.draft_source && (
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  padding: "2px 6px",
+                  background: stakeholderUpdate.draft_source === "llm" ? "#d4edda" : "#f4f4f4",
+                  color: stakeholderUpdate.draft_source === "llm" ? "#155724" : "#555",
+                  border: `1px solid ${stakeholderUpdate.draft_source === "llm" ? "#c3e6cb" : "#ccc"}`,
+                }}
+              >
+                {stakeholderUpdate.draft_source === "llm" ? "LLM draft" : "fallback"}
+              </span>
+            )}
+          </div>
 
           <div>
             <strong>To</strong>

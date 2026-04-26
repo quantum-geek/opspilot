@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 import pathlib
 import re
 from datetime import datetime
@@ -6,6 +8,8 @@ from datetime import datetime
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="OpsPilot API", version="0.1.0")
 
@@ -182,6 +186,66 @@ def incident_analysis(incident_id: str):
 
 
 # ---------------------------------------------------------------------------
+# LLM stakeholder update
+# ---------------------------------------------------------------------------
+
+def _llm_draft_stakeholder_update(
+    incident: dict,
+    catalog_yaml: str,
+    runbook_text: str,
+    duration_minutes: int | None,
+    audience: str,
+) -> dict:
+    """Call Claude to draft update_text, impact_summary, and next_steps.
+
+    Raises on any failure so callers can fall back to deterministic logic.
+    """
+    import anthropic  # lazy import — only needed when LLM path is taken
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
+
+    duration_line = f"Duration: {duration_minutes} minutes" if duration_minutes is not None else "Duration: ongoing"
+
+    prompt = (
+        "You are an incident communications specialist. "
+        "Draft a stakeholder update for the incident below.\n\n"
+        f"INCIDENT:\n{json.dumps(incident, indent=2)}\n\n"
+        f"SERVICE CATALOG (relevant excerpt):\n{catalog_yaml}\n\n"
+        f"RUNBOOK:\n{runbook_text}\n\n"
+        f"{duration_line}\n\n"
+        f"AUDIENCE: {audience}\n\n"
+        "Return a JSON object with exactly these three keys:\n"
+        '  "update_text"    — 2-3 sentence prose update appropriate for the audience\n'
+        '  "impact_summary" — one sentence describing the business impact\n'
+        '  "next_steps"     — JSON array of 2-4 concise action items (strings)\n\n'
+        "Output only the JSON object, no markdown fences or extra text."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
+    # Strip markdown code fences if the model adds them anyway
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    result = json.loads(raw)
+    # Validate expected keys are present
+    for key in ("update_text", "impact_summary", "next_steps"):
+        if key not in result:
+            raise KeyError(f"LLM response missing key: {key}")
+    if not isinstance(result["next_steps"], list):
+        raise TypeError("next_steps must be a list")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Stakeholder update helpers
 # ---------------------------------------------------------------------------
 
@@ -289,6 +353,30 @@ def incident_stakeholder_update(incident_id: str):
     if not next_steps:
         next_steps = _derive_next_steps(incident.get("labels", []), status)
 
+    # Attempt LLM-backed drafting; silently fall back on any failure
+    draft_source = "fallback"
+    runbook_text = ""
+    for rb_id in catalog_runbook_ids:
+        rb_path = runbooks_dir / f"{rb_id}.md"
+        if rb_path.exists():
+            runbook_text = rb_path.read_text(encoding="utf-8")
+            break
+
+    try:
+        llm = _llm_draft_stakeholder_update(
+            incident=incident,
+            catalog_yaml=catalog_path.read_text(encoding="utf-8") if catalog_path.exists() else "",
+            runbook_text=runbook_text,
+            duration_minutes=duration_minutes,
+            audience=audience,
+        )
+        update_text = llm["update_text"]
+        impact_summary = llm["impact_summary"]
+        next_steps = llm["next_steps"]
+        draft_source = "llm"
+    except Exception as exc:
+        logger.warning("LLM stakeholder update failed, using fallback: %s", exc)
+
     return {
         "incident_id": incident["id"],
         "audience": audience,
@@ -297,4 +385,5 @@ def incident_stakeholder_update(incident_id: str):
         "status": status,
         "impact_summary": impact_summary,
         "next_steps": next_steps,
+        "draft_source": draft_source,
     }
