@@ -61,5 +61,54 @@
     "source": "human",
     "action": "approved",
     "timestamp": "2026-04-26T05:29:19.849147Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "analysis",
+    "source": "llm",
+    "action": "generated",
+    "timestamp": "2026-04-28T03:38:21.020382Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "stakeholder_update",
+    "source": "llm",
+    "action": "generated",
+    "timestamp": "2026-04-28T03:38:25.578030Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "stakeholder_update",
+    "source": "human",
+    "action": "approved",
+    "timestamp": "2026-04-28T03:38:27.922826Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "postmortem_draft",
+    "source": "llm",
+    "action": "generated",
+    "timestamp": "2026-04-28T03:38:35.138740Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "stakeholder_update",
+    "source": "human",
+    "action": "rejected",
+    "timestamp": "2026-04-28T03:38:38.060222Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "postmortem_draft",
+    "source": "llm",
+    "action": "generated",
+    "timestamp": "2026-04-28T03:38:43.967961Z"
+  },
+  {
+    "incident_id": "INC-001",
+    "artifact_type": "postmortem_draft",
+    "source": "human",
+    "action": "approved",
+    "timestamp": "2026-04-28T03:38:47.594597Z"
   }
 ]

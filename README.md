@@ -110,22 +110,48 @@ make dev-mcp      # terminal 3
 
 ## Docker (any OS)
 
+### Prerequisites
+- Docker Desktop (or Docker Engine + Compose plugin) installed and running
+
+### Steps
+
+**Bash / macOS / Linux:**
 ```bash
-cp .env.example .env   # or Copy-Item on PowerShell
-# add ANTHROPIC_API_KEY to .env
-make build
-make up
+cp .env.example .env
+# Open .env and set ANTHROPIC_API_KEY=sk-ant-...
+docker compose up --build
 ```
 
-## Service URLs
+**Windows PowerShell:**
+```powershell
+Copy-Item .env.example .env
+# Open .env and set ANTHROPIC_API_KEY=sk-ant-...
+docker compose up --build
+```
 
-| Service         | URL                          |
-|-----------------|------------------------------|
-| Web UI          | http://localhost:3000        |
-| API             | http://localhost:8000        |
-| API health      | http://localhost:8000/health |
-| API docs        | http://localhost:8000/docs   |
-| MCP Inspector   | http://localhost:5173        |
+All three services build and start in one command. The first build takes a few minutes; subsequent starts are fast (`docker compose up` without `--build`).
+
+### Expected URLs once running
+
+| Service    | URL                          | Notes                        |
+|------------|------------------------------|------------------------------|
+| Web UI     | http://localhost:3000        | Main dashboard               |
+| API        | http://localhost:8000        |                              |
+| API health | http://localhost:8000/health | Returns `{"status":"ok",...}`|
+| API docs   | http://localhost:8000/docs   | Swagger UI                   |
+| MCP server | http://localhost:8001        | SSE transport in Docker      |
+
+### Stopping
+
+```bash
+docker compose down
+```
+
+### Notes
+
+- `ANTHROPIC_API_KEY` is optional — all LLM features fall back to deterministic output if it is missing or invalid.
+- `NEXT_PUBLIC_API_URL` defaults to `http://localhost:8000`. The web UI calls the API from the browser, so this must be reachable from the machine running the browser. Change it in `.env` if running Docker on a remote host.
+- Audit events are written to `data/audit/` on your host machine (the `data/` directory is mounted read-write into the API container).
 
 ## Suggested demo flow
 

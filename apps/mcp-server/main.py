@@ -5,7 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 DATA_DIR = pathlib.Path(__file__).parent.parent.parent / "data"
 
-mcp = FastMCP("opspilot-mcp")
+mcp = FastMCP("opspilot-mcp", port=int(os.getenv("MCP_PORT", "8001")))
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +90,6 @@ def triage_incident(incident_id: str) -> str:
 if __name__ == "__main__":
     transport = os.getenv("MCP_TRANSPORT", "stdio")
     if transport == "sse":
-        mcp.run(transport="sse", host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8001")))
+        mcp.run(transport="sse")
     else:
         mcp.run()
